@@ -1,6 +1,6 @@
 # AutoML Run Summary
 
-> Generated on 2026-02-20 21:32:01
+> Generated on 2026-02-21 13:09:27
 
 ---
 
@@ -23,8 +23,8 @@
 
 | model_name       |   cv_score_mean |   cv_score_std |   test_score |   latency_ms |   final_score |
 |:-----------------|----------------:|---------------:|-------------:|-------------:|--------------:|
-| GradientBoosting |        0.996359 |     0.00340263 |     1        |    0.0066328 |      0.849999 |
-| RandomForest     |        0.999091 |     0.00181818 |     0.996364 |    0.213699  |      0.746342 |
+| GradientBoosting |        0.996359 |     0.00340263 |     1        |    0.0108576 |      0.849999 |
+| RandomForest     |        0.999091 |     0.00181818 |     0.996364 |    0.329924  |      0.746331 |
 
 ---
 
@@ -36,8 +36,8 @@
 | CV Score (mean +/- std) | 0.9964 +/- 0.0034 |
 | Test Score | 1.0000 |
 | Final Score (cost-aware) | 0.8500 |
-| Latency (ms/sample) | 0.0066 |
-| Model ID | `GradientBoosting_b22de4e9f16e_1771603320` |
+| Latency (ms/sample) | 0.0109 |
+| Model ID | `GradientBoosting_b22de4e9f16e_1771659566` |
 
 ### Hyperparameters
 
@@ -62,9 +62,9 @@
 
 | Artifact | Path |
 |----------|------|
-| Pickle file | `models\GradientBoosting_b22de4e9f16e_1771603320.pkl` |
-| Joblib file | `models\GradientBoosting_b22de4e9f16e_1771603320.joblib` |
-| Metadata | `models/GradientBoosting_b22de4e9f16e_1771603320_metadata.json` |
+| Pickle file | `models\GradientBoosting_b22de4e9f16e_1771659566.pkl` |
+| Joblib file | `models\GradientBoosting_b22de4e9f16e_1771659566.joblib` |
+| Metadata | `models/GradientBoosting_b22de4e9f16e_1771659566_metadata.json` |
 
 ---
 
@@ -74,7 +74,7 @@
 import pickle, pandas as pd
 
 # Load pickle
-with open('models\GradientBoosting_b22de4e9f16e_1771603320.pkl', 'rb') as f:
+with open('models\GradientBoosting_b22de4e9f16e_1771659566.pkl', 'rb') as f:
     bundle = pickle.load(f)
 
 model = bundle['model']

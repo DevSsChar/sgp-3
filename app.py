@@ -45,6 +45,7 @@ import pandas as pd
 import joblib
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Form, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # ==============================================================
@@ -59,6 +60,15 @@ app = FastAPI(
         "**download the best `.pkl` file** → **run predictions** via JSON or CSV upload."
     ),
     version="2.0.0",
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 MODEL_DIR = Path("models")

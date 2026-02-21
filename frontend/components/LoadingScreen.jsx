@@ -1,5 +1,5 @@
 "use client";
-import { Pause, Terminal, Settings, Layers, Activity } from 'lucide-react';
+import { Pause, Terminal, Settings, Layers, Activity, CheckCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import Navbar from './Navbar';
 
@@ -16,8 +16,10 @@ export default function LoadingScreen({
   elapsedTime = "00:42:15",
   estimatedTime = "~00:15:00",
   features = "1,248",
+  isCompleted = false,
   onPause,
-  onViewLogs
+  onViewLogs,
+  onSeeModel
 }) {
   const [pulseOpacity, setPulseOpacity] = useState(0.4);
 
@@ -365,40 +367,61 @@ export default function LoadingScreen({
       </main>
 
       {/* Footer Controls */}
-      {/* <footer className="absolute bottom-0 w-full p-8 flex justify-between items-center z-50">
+      <footer className="absolute bottom-0 w-full p-8 flex justify-between items-center z-50">
         <div className="flex gap-4">
-          <button 
-            onClick={onPause}
-            className="px-6 py-2 rounded-lg text-sm font-semibold hover:bg-[#3D3D3D]/50 transition-all flex items-center gap-2"
-            style={{
-              background: 'rgba(117, 117, 117, 0.2)',
-              backdropFilter: 'blur(12px)',
-              border: '1px solid rgba(140, 140, 140, 0.3)'
-            }}
-          >
-            <Pause size={16} />
-            Pause Training
-          </button>
-          <button 
-            onClick={onViewLogs}
-            className="px-6 py-2 rounded-lg text-sm font-semibold hover:bg-[#3D3D3D]/50 transition-all flex items-center gap-2"
-            style={{
-              background: 'rgba(117, 117, 117, 0.2)',
-              backdropFilter: 'blur(12px)',
-              border: '1px solid rgba(140, 140, 140, 0.3)'
-            }}
-          >
-            <Terminal size={16} />
-            View Live Logs
-          </button>
+          {!isCompleted && (
+            <>
+              {/* <button 
+                onClick={onPause}
+                className="px-6 py-2 rounded-lg text-sm font-semibold hover:bg-[#3D3D3D]/50 transition-all flex items-center gap-2"
+                style={{
+                  background: 'rgba(117, 117, 117, 0.2)',
+                  backdropFilter: 'blur(12px)',
+                  border: '1px solid rgba(140, 140, 140, 0.3)'
+                }}
+              >
+                <Pause size={16} />
+                Pause Training
+              </button>
+              <button 
+                onClick={onViewLogs}
+                className="px-6 py-2 rounded-lg text-sm font-semibold hover:bg-[#3D3D3D]/50 transition-all flex items-center gap-2"
+                style={{
+                  background: 'rgba(117, 117, 117, 0.2)',
+                  backdropFilter: 'blur(12px)',
+                  border: '1px solid rgba(140, 140, 140, 0.3)'
+                }}
+              >
+                <Terminal size={16} />
+                View Live Logs
+              </button> */}
+            </>
+          )}
+          {isCompleted && (
+            <button 
+              onClick={onSeeModel}
+              className="px-8 py-3 rounded-lg text-base font-bold hover:scale-105 transition-all flex items-center gap-3 animate-pulse"
+              style={{
+                background: 'linear-gradient(135deg, #757575 0%, #8C8C8C 100%)',
+                color: 'white',
+                boxShadow: '0 0 30px rgba(117, 117, 117, 0.5), 0 10px 40px rgba(0, 0, 0, 0.3)',
+                border: '1px solid rgba(140, 140, 140, 0.5)'
+              }}
+            >
+              <CheckCircle size={20} />
+              See the Model
+            </button>
+          )}
         </div>
 
         <div className="flex items-center gap-6">
           <div className="flex flex-col items-end">
             <span className="text-[10px] text-[#8C8C8C] uppercase tracking-widest">
-              Server Location
+              {isCompleted ? 'Training Complete' : ''}
             </span>
-            <span className="text-xs font-medium">US-EAST-VA (Cluster 04)</span>
+            <span className="text-xs font-medium">
+              {isCompleted ? '100% Success' : ''}
+            </span>
           </div>
           <div 
             className="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center"
@@ -408,10 +431,14 @@ export default function LoadingScreen({
               border: '1px solid rgba(140, 140, 140, 0.3)'
             }}
           >
-            <div className="w-8 h-8 rounded-full bg-[#757575]/20" />
+            {isCompleted ? (
+              <CheckCircle className="text-[#B0B0B0]" size={24} />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-[#757575]/20" />
+            )}
           </div>
         </div>
-      </footer> */}
+      </footer>
 
       {/* CSS Animations */}
       <style jsx>{`

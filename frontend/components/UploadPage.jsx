@@ -1,8 +1,9 @@
 "use client";
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Upload, Database, CloudUpload, Link as LinkIcon, Download, ArrowRight, Lock, Shield, X, Target } from 'lucide-react';
 import Navbar from '@/components/Navbar';
+import LoadingScreen from '@/components/LoadingScreen';
 
 export default function UploadPage() {
   const router = useRouter();
@@ -11,7 +12,69 @@ export default function UploadPage() {
   const [uploadedFiles, setUploadedFiles] = useState(null);
   const [activeMethod, setActiveMethod] = useState(null); // 'local' or 'kaggle'
   const [targetColumn, setTargetColumn] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [isTraining, setIsTraining] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [isCompleted, setIsCompleted] = useState(false);
+  const [trainingData, setTrainingData] = useState(null);
+  const [elapsedTime, setElapsedTime] = useState("00:00:00");
+  const [currentStep, setCurrentStep] = useState("Data Preprocessing");
+  const [stepNumber, setStepNumber] = useState(1);
+  const [trainingComplete, setTrainingComplete] = useState(false); // Training timer complete
   const fileInputRef = useRef(null);
+
+  // Training progress simulation
+  useEffect(() => {
+    if (!isTraining) return;
+
+    const startTime = Date.now();
+    const totalDuration = 15 * 60 * 1000; // 15 minutes to reach 100%
+
+    const progressInterval = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      let progressPercent = Math.min((elapsed / totalDuration) * 100, 100);
+
+      setProgress(progressPercent);
+
+      // Update elapsed time
+      const seconds = Math.floor(elapsed / 1000);
+      const mins = Math.floor(seconds / 60);
+      const hrs = Math.floor(mins / 60);
+      setElapsedTime(
+        `${String(hrs).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
+      );
+
+      // Update steps based on progress
+      if (progressPercent < 20) {
+        setCurrentStep("Data Preprocessing");
+        setStepNumber(1);
+      } else if (progressPercent < 40) {
+        setCurrentStep("Feature Engineering");
+        setStepNumber(2);
+      } else if (progressPercent < 60) {
+        setCurrentStep("Model Training");
+        setStepNumber(3);
+      } else if (progressPercent < 80) {
+        setCurrentStep("Hyperparameter Tuning");
+        setStepNumber(4);
+      } else if (progressPercent < 95) {
+        setCurrentStep("Model Validation");
+        setStepNumber(5);
+      } else {
+        setCurrentStep("Finalizing Best Model");
+        setStepNumber(6);
+      }
+
+      // When progress reaches 100%, mark as complete
+      if (progressPercent >= 100) {
+        setTrainingComplete(true);
+        clearInterval(progressInterval);
+      }
+    }, 1000);
+
+    return () => clearInterval(progressInterval);
+  }, [isTraining]);
 
   const handleDrag = (e) => {
     e.preventDefault();
@@ -67,11 +130,100 @@ export default function UploadPage() {
     }
   };
 
-  const handleStartIngestion = () => {
-    console.log('Starting ingestion process');
-    console.log('Target column:', targetColumn);
-    console.log('Upload method:', activeMethod);
-    router.push('/loading-demo');
+  const handleStartIngestion = async () => {
+    if (!targetColumn.trim()) {
+      setError('Please specify a target column name');
+      return;
+    }
+
+    if (!activeMethod) {
+      setError('Please select a data source (upload file or enter Kaggle URL)');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError('');
+
+    // Store initial training info before API call
+    const initialTrainingInfo = {
+      startTime: Date.now(),
+      targetColumn: targetColumn,
+      method: activeMethod,
+      fileName: uploadedFiles ? uploadedFiles[0]?.name : null,
+      kaggleUrl: activeMethod === 'kaggle' ? kaggleUrl : null
+    };
+    setTrainingData(initialTrainingInfo);
+    localStorage.setItem('trainingData', JSON.stringify(initialTrainingInfo));
+
+    // Start training mode immediately to show LoadingScreen
+    setIsTraining(true);
+
+    try {
+      let response;
+      
+      if (activeMethod === 'local') {
+        // File upload endpoint
+        if (!uploadedFiles || uploadedFiles.length === 0) {
+          setError('Please upload a file');
+          setIsSubmitting(false);
+          setIsTraining(false);
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', uploadedFiles[0]);
+        formData.append('target_column', targetColumn);
+
+        response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/train`, {
+          method: 'POST',
+          body: formData,
+        });
+      } else if (activeMethod === 'kaggle') {
+        // Kaggle URL endpoint
+        if (!kaggleUrl.trim()) {
+          setError('Please enter a Kaggle dataset URL');
+          setIsSubmitting(false);
+          setIsTraining(false);
+          return;
+        }
+
+        response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/train/kaggle`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            kaggle_url: kaggleUrl,
+            target_column: targetColumn,
+          }),
+        });
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Training failed');
+      }
+
+      const data = await response.json();
+      
+      // Update training info with API response data
+      const updatedTrainingInfo = {
+        ...trainingData,
+        ...data
+      };
+      setTrainingData(updatedTrainingInfo);
+      localStorage.setItem('trainingData', JSON.stringify(updatedTrainingInfo));
+
+      // Training complete - show "See Model" button immediately
+      setTrainingComplete(true);
+      setProgress(100);
+      setIsSubmitting(false);
+    } catch (err) {
+      console.error('Training error:', err);
+      setError(err.message || 'Failed to start training. Please check your backend is running.');
+      setIsSubmitting(false);
+      setIsTraining(false); // Revert to upload page on error
+    }
   };
 
   const clearSelection = () => {
@@ -79,7 +231,78 @@ export default function UploadPage() {
     setUploadedFiles(null);
     setKaggleUrl('');
     setTargetColumn('');
+    setError('');
   };
+
+  const handlePause = () => {
+    console.log("Training paused");
+  };
+
+  const handleViewLogs = () => {
+    console.log("Opening logs...");
+  };
+
+  const handleSeeModel = async () => {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    
+    try {
+      // Fetch best model when user clicks button
+      const bestModelResponse = await fetch(`${apiUrl}/models/best`);
+      if (!bestModelResponse.ok) {
+        throw new Error('Model not ready yet. Please wait a moment and try again.');
+      }
+      
+      const bestModelData = await bestModelResponse.json();
+      localStorage.setItem('modelResults', JSON.stringify(bestModelData));
+
+      // Fetch all models
+      try {
+        const allModelsResponse = await fetch(`${apiUrl}/models`);
+        if (allModelsResponse.ok) {
+          const allModelsData = await allModelsResponse.json();
+          localStorage.setItem('allModels', JSON.stringify(allModelsData));
+        }
+      } catch (err) {
+        console.log('Could not fetch all models, will use best model only');
+      }
+      
+      // Navigate to results page
+      router.push('/results');
+    } catch (error) {
+      console.error('Error fetching model data:', error);
+      alert(error.message || 'Failed to fetch model results. Please try again in a moment.');
+    }
+  };
+
+  const estimatedRemaining = () => {
+    if (isCompleted) return "Complete";
+    const remaining = Math.max(0, 15 - Math.floor((progress / 100) * 15));
+    return `~${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}:00`;
+  };
+
+  // If training is in progress, show LoadingScreen
+  if (isTraining) {
+    return (
+      <LoadingScreen
+        progress={parseFloat(progress.toFixed(1))}
+        modelName={trainingData?.method === 'kaggle' ? 'Kaggle Dataset' : uploadedFiles ? uploadedFiles[0]?.name : 'Uploaded CSV'}
+        currentStep={currentStep}
+        stepNumber={stepNumber}
+        totalSteps={6}
+        accuracy={Math.min(85 + progress * 0.1, 95.8)}
+        validationLoss={parseFloat((0.2 - (progress * 0.0015)).toFixed(3))}
+        gpuUtilization={Math.min(75 + progress * 0.15, 92)}
+        memoryBandwidth={Math.min(80 + progress * 0.12, 95)}
+        elapsedTime={elapsedTime}
+        estimatedTime={estimatedRemaining()}
+        features="1,248"
+        onPause={handlePause}
+        onViewLogs={handleViewLogs}
+        isCompleted={trainingComplete}
+        onSeeModel={handleSeeModel}
+      />
+    );
+  }
 
   return (
     <>
@@ -450,43 +673,61 @@ export default function UploadPage() {
             {/* Footer Stats */}
             <div className="mt-8 flex flex-wrap items-center justify-between gap-6 px-4">
               <div className="flex items-center gap-8">
-                <div>
-                  <p className="text-[10px] font-bold text-[#8C8C8C] uppercase tracking-widest mb-1">
-                    Avg. Ingestion Speed
-                  </p>
-                  <p className="text-white font-display font-medium">1.2 GB/s</p>
-                </div>
-                <div className="h-8 w-px bg-white/10"></div>
-                <div>
-                  <p className="text-[10px] font-bold text-[#8C8C8C] uppercase tracking-widest mb-1">
-                    Queue Status
-                  </p>
-                  <p className="text-[#B0B0B0] font-display font-medium flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#B0B0B0]"></span>
-                    Nominal
-                  </p>
-                </div>
+                {error && (
+                  <div 
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg"
+                    style={{
+                      background: 'rgba(220, 38, 38, 0.1)',
+                      border: '1px solid rgba(220, 38, 38, 0.3)'
+                    }}
+                  >
+                    <span className="text-red-400 text-sm">{error}</span>
+                  </div>
+                )}
+                {!error && (
+                  <>
+                    <div>
+                      <p className="text-[10px] font-bold text-[#8C8C8C] uppercase tracking-widest mb-1">
+                        Avg. Ingestion Speed
+                      </p>
+                      <p className="text-white font-display font-medium">1.2 GB/s</p>
+                    </div>
+                    <div className="h-8 w-px bg-white/10"></div>
+                    <div>
+                      <p className="text-[10px] font-bold text-[#8C8C8C] uppercase tracking-widest mb-1">
+                        Queue Status
+                      </p>
+                      <p className="text-[#B0B0B0] font-display font-medium flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#B0B0B0]"></span>
+                        Nominal
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
 
               <button 
-                className="group flex items-center gap-3 px-8 py-4 rounded-xl font-bold tracking-tight transition-all"
+                className="group flex items-center gap-3 px-8 py-4 rounded-xl font-bold tracking-tight transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{
-                  background: '#757575',
+                  background: isSubmitting ? '#525252' : '#757575',
                   color: 'white',
                   boxShadow: '0 0 30px rgba(117, 117, 117, 0.3)'
                 }}
                 onClick={handleStartIngestion}
+                disabled={isSubmitting || !activeMethod || !targetColumn.trim()}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.boxShadow = '0 0 30px rgba(117, 117, 117, 0.5)';
-                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  if (!isSubmitting && activeMethod && targetColumn.trim()) {
+                    e.currentTarget.style.boxShadow = '0 0 30px rgba(117, 117, 117, 0.5)';
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                  }
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.boxShadow = '0 0 30px rgba(117, 117, 117, 0.3)';
                   e.currentTarget.style.transform = 'translateY(0)';
                 }}
               >
-                Start Ingestion Process
-                <ArrowRight className="group-hover:translate-x-1 transition-transform" size={20} />
+                {isSubmitting ? 'Starting Training...' : 'Start Ingestion Process'}
+                <ArrowRight className={`transition-transform ${isSubmitting ? 'animate-pulse' : 'group-hover:translate-x-1'}`} size={20} />
               </button>
             </div>
           </div>
