@@ -1,0 +1,7 @@
+/models
+/logs
+/__pycache__/
+*.pyc
+/sgp3
+/uploads
+/MODEL_SUMMARY.md

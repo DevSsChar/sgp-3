@@ -41,12 +41,41 @@ from sklearn.metrics import (
     accuracy_score, f1_score, roc_auc_score,
     mean_squared_error, r2_score, classification_report
 )
-from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.linear_model import (
+    LogisticRegression, Ridge, Lasso, ElasticNet,
+    RidgeClassifier, SGDClassifier, LinearRegression,
+)
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.ensemble import (
     RandomForestClassifier, RandomForestRegressor,
-    GradientBoostingClassifier, GradientBoostingRegressor
+    GradientBoostingClassifier, GradientBoostingRegressor,
+    ExtraTreesClassifier, ExtraTreesRegressor,
+    HistGradientBoostingClassifier, HistGradientBoostingRegressor,
+    AdaBoostClassifier,
+)
+from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
+from sklearn.svm import SVC, SVR
+from sklearn.naive_bayes import GaussianNB
+from sklearn.discriminant_analysis import (
+    LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis,
 )
 from sklearn.utils.class_weight import compute_class_weight
+
+# Models that do NOT accept a random_state constructor argument
+_NO_RANDOM_STATE = {
+    KNeighborsClassifier, KNeighborsRegressor,
+    GaussianNB,
+    LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis,
+    SVR,   # SVR has no random_state
+    Lasso, ElasticNet, LinearRegression,   # no random_state
+    RidgeClassifier, Ridge,
+}
+
+def _build_model(model_class, params: dict):
+    """Construct a model, omitting random_state for classes that don't support it."""
+    if model_class in _NO_RANDOM_STATE:
+        return model_class(**params)
+    return model_class(**params, random_state=Config.RANDOM_STATE)
 from scipy.stats import ks_2samp, skew
 
 # Imbalanced learning
@@ -115,32 +144,36 @@ class Config:
 # ==============================================================
 
 def setup_logger(name: str = "AutoML") -> logging.Logger:
-    """Configure professional logging system"""
+    """Configure professional logging system — UTF-8 safe on all platforms."""
     Config.setup_directories()
 
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
 
-    # Console handler
-    console_handler = logging.StreamHandler()
+    # Console handler — force UTF-8 so emoji/arrows don't crash Windows cp1252
+    import sys, io
+    safe_stream = io.TextIOWrapper(
+        sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True
+    ) if hasattr(sys.stdout, 'buffer') else sys.stdout
+
+    console_handler = logging.StreamHandler(safe_stream)
     console_handler.setLevel(logging.INFO)
-    console_format = logging.Formatter(
+    console_handler.setFormatter(logging.Formatter(
         '%(asctime)s | %(levelname)-8s | %(message)s',
         datefmt='%H:%M:%S'
-    )
-    console_handler.setFormatter(console_format)
+    ))
 
-    # File handler
+    # File handler — always UTF-8
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     file_handler = logging.FileHandler(
-        Config.LOG_DIR / f"automl_{timestamp}.log"
+        Config.LOG_DIR / f"automl_{timestamp}.log",
+        encoding='utf-8'
     )
     file_handler.setLevel(logging.DEBUG)
-    file_format = logging.Formatter(
+    file_handler.setFormatter(logging.Formatter(
         '%(asctime)s | %(levelname)-8s | %(name)s | %(message)s'
-    )
-    file_handler.setFormatter(file_format)
+    ))
 
     logger.addHandler(console_handler)
     logger.addHandler(file_handler)
@@ -436,40 +469,143 @@ class HyperparameterTuner:
 
     @staticmethod
     def get_search_space(trial: optuna.Trial, model_name: str, task: str) -> Dict:
-        """Define search space for each model"""
+        """
+        Define Optuna search space for every model in the zoo.
+        Returns an empty dict for models with no tunable hyperparameters
+        (they will be trained with defaults).
+        """
 
+        # ── Classification & Regression trees / ensembles ──────────────
         if model_name == 'RandomForest':
             return {
-                'n_estimators': trial.suggest_int('n_estimators', 50, 300),
-                'max_depth': trial.suggest_int('max_depth', 5, 30),
+                'n_estimators':    trial.suggest_int('n_estimators', 50, 300),
+                'max_depth':       trial.suggest_int('max_depth', 3, 30),
                 'min_samples_split': trial.suggest_int('min_samples_split', 2, 20),
-                'min_samples_leaf': trial.suggest_int('min_samples_leaf', 1, 10),
-                'max_features': trial.suggest_categorical('max_features', ['sqrt', 'log2', None]),
+                'min_samples_leaf':  trial.suggest_int('min_samples_leaf', 1, 10),
+                'max_features':    trial.suggest_categorical('max_features', ['sqrt', 'log2', None]),
+            }
+
+        elif model_name == 'ExtraTrees':
+            return {
+                'n_estimators':    trial.suggest_int('n_estimators', 50, 300),
+                'max_depth':       trial.suggest_int('max_depth', 3, 30),
+                'min_samples_split': trial.suggest_int('min_samples_split', 2, 20),
+                'min_samples_leaf':  trial.suggest_int('min_samples_leaf', 1, 10),
+                'max_features':    trial.suggest_categorical('max_features', ['sqrt', 'log2', None]),
             }
 
         elif model_name == 'GradientBoosting':
             return {
-                'n_estimators': trial.suggest_int('n_estimators', 50, 200),
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
-                'max_depth': trial.suggest_int('max_depth', 3, 10),
+                'n_estimators':    trial.suggest_int('n_estimators', 50, 300),
+                'learning_rate':   trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
+                'max_depth':       trial.suggest_int('max_depth', 2, 8),
                 'min_samples_split': trial.suggest_int('min_samples_split', 2, 20),
-                'subsample': trial.suggest_float('subsample', 0.6, 1.0),
+                'subsample':       trial.suggest_float('subsample', 0.6, 1.0),
             }
 
-        elif model_name == 'LogisticRegression':
+        elif model_name == 'HistGradientBoosting':
             return {
-                'C': trial.suggest_float('C', 1e-4, 100, log=True),
+                'max_iter':        trial.suggest_int('max_iter', 50, 300),
+                'learning_rate':   trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
+                'max_depth':       trial.suggest_int('max_depth', 2, 10),
+                'l2_regularization': trial.suggest_float('l2_regularization', 0.0, 1.0),
+                'min_samples_leaf':  trial.suggest_int('min_samples_leaf', 5, 50),
+            }
+
+        elif model_name == 'AdaBoost':
+            return {
+                'n_estimators':    trial.suggest_int('n_estimators', 50, 300),
+                'learning_rate':   trial.suggest_float('learning_rate', 0.01, 2.0, log=True),
+            }
+
+        elif model_name == 'DecisionTree':
+            return {
+                'max_depth':       trial.suggest_int('max_depth', 2, 20),
+                'min_samples_split': trial.suggest_int('min_samples_split', 2, 20),
+                'min_samples_leaf':  trial.suggest_int('min_samples_leaf', 1, 10),
+                'criterion': trial.suggest_categorical(
+                    'criterion',
+                    ['gini', 'entropy'] if task == 'classification' else ['squared_error', 'friedman_mse']
+                ),
+            }
+
+        # ── Linear models ───────────────────────────────────────────────
+        elif model_name == 'LogisticRegression':
+            # Use 'saga' solver — the only one that supports both l1 and l2
+            return {
+                'C':       trial.suggest_float('C', 1e-4, 100.0, log=True),
                 'penalty': trial.suggest_categorical('penalty', ['l1', 'l2']),
-                'solver': 'saga',
+                'solver':  'saga',
                 'max_iter': 1000,
+            }
+
+        elif model_name == 'RidgeClassifier':
+            return {
+                'alpha': trial.suggest_float('alpha', 1e-4, 100.0, log=True),
+            }
+
+        elif model_name == 'SGDClassifier':
+            return {
+                'loss':    trial.suggest_categorical('loss', ['hinge', 'log_loss', 'modified_huber']),
+                'alpha':   trial.suggest_float('alpha', 1e-6, 1e-1, log=True),
+                'penalty': trial.suggest_categorical('penalty', ['l2', 'l1', 'elasticnet']),
+                'max_iter': 1000,
+                'tol': 1e-3,
             }
 
         elif model_name == 'Ridge':
             return {
-                'alpha': trial.suggest_float('alpha', 1e-4, 100, log=True),
+                'alpha': trial.suggest_float('alpha', 1e-4, 100.0, log=True),
             }
 
-        return {}
+        elif model_name == 'Lasso':
+            return {
+                'alpha':    trial.suggest_float('alpha', 1e-4, 10.0, log=True),
+                'max_iter': 2000,
+            }
+
+        elif model_name == 'ElasticNet':
+            return {
+                'alpha':    trial.suggest_float('alpha', 1e-4, 10.0, log=True),
+                'l1_ratio': trial.suggest_float('l1_ratio', 0.0, 1.0),
+                'max_iter': 2000,
+            }
+
+        elif model_name == 'LinearRegression':
+            return {}  # No hyperparameters to tune
+
+        # ── Distance / Kernel ───────────────────────────────────────────
+        elif model_name == 'KNN':
+            return {
+                'n_neighbors': trial.suggest_int('n_neighbors', 1, 30),
+                'weights':     trial.suggest_categorical('weights', ['uniform', 'distance']),
+                'metric':      trial.suggest_categorical('metric', ['euclidean', 'manhattan']),
+            }
+
+        elif model_name in ('SVC', 'SVR'):
+            return {
+                'C':      trial.suggest_float('C', 0.01, 100.0, log=True),
+                'kernel': trial.suggest_categorical('kernel', ['rbf', 'linear', 'poly']),
+                'gamma':  trial.suggest_categorical('gamma', ['scale', 'auto']),
+            }
+
+        # ── Probabilistic / Discriminant ────────────────────────────────
+        elif model_name == 'GaussianNB':
+            return {
+                'var_smoothing': trial.suggest_float('var_smoothing', 1e-9, 1e-2, log=True),
+            }
+
+        elif model_name == 'LDA':
+            return {
+                'solver': trial.suggest_categorical('solver', ['svd', 'lsqr']),
+            }
+
+        elif model_name == 'QDA':
+            return {
+                'reg_param': trial.suggest_float('reg_param', 0.0, 1.0),
+            }
+
+        return {}  # Fallback: use model defaults
 
     @staticmethod
     def optimize(
@@ -490,7 +626,7 @@ class HyperparameterTuner:
                 X_train, X_val = X[train_idx], X[val_idx]
                 y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
 
-                model = model_class(**params, random_state=Config.RANDOM_STATE)
+                model = _build_model(model_class, params)
                 model.fit(X_train, y_train)
                 preds = model.predict(X_val)
 
@@ -526,19 +662,55 @@ class ModelTrainer:
 
     @staticmethod
     def get_model_zoo(task: str) -> List[Tuple[str, Any, float]]:
-        """Return available models for task"""
+        """
+        Return (name, class, size_mb_estimate) for every candidate model.
 
+        Classification: 13 algorithms spanning linear, tree, boosting,
+                        kernel, probabilistic, and discriminant families.
+        Regression:      9 algorithms covering the same breadth.
+
+        size_mb is a rough disk-footprint estimate used in the cost-aware
+        scoring formula — lower is better.
+        """
         if task == 'classification':
             return [
-                ('LogisticRegression', LogisticRegression, 1.0),
-                ('RandomForest', RandomForestClassifier, 5.0),
-                ('GradientBoosting', GradientBoostingClassifier, 3.0),
+                # ── Linear / Probabilistic ─────────────────────────
+                ('LogisticRegression',       LogisticRegression,             1.0),
+                ('RidgeClassifier',          RidgeClassifier,                0.5),
+                ('SGDClassifier',            SGDClassifier,                  0.5),
+                # ── Tree-based ─────────────────────────────────────
+                ('DecisionTree',             DecisionTreeClassifier,         0.5),
+                ('RandomForest',             RandomForestClassifier,         8.0),
+                ('ExtraTrees',               ExtraTreesClassifier,           7.0),
+                # ── Gradient Boosting ──────────────────────────────
+                ('GradientBoosting',         GradientBoostingClassifier,     4.0),
+                ('HistGradientBoosting',     HistGradientBoostingClassifier, 3.0),
+                ('AdaBoost',                 AdaBoostClassifier,             3.0),
+                # ── Distance / Kernel ──────────────────────────────
+                ('KNN',                      KNeighborsClassifier,           1.0),
+                ('SVC',                      SVC,                            2.0),
+                # ── Probabilistic ──────────────────────────────────
+                ('GaussianNB',               GaussianNB,                     0.2),
+                # ── Discriminant Analysis ──────────────────────────
+                ('LDA',                      LinearDiscriminantAnalysis,     0.5),
+                ('QDA',                      QuadraticDiscriminantAnalysis,  0.5),
             ]
         else:
             return [
-                ('Ridge', Ridge, 1.0),
-                ('RandomForest', RandomForestRegressor, 5.0),
-                ('GradientBoosting', GradientBoostingRegressor, 3.0),
+                # ── Linear ─────────────────────────────────────────
+                ('LinearRegression',         LinearRegression,               0.2),
+                ('Ridge',                    Ridge,                          0.5),
+                ('Lasso',                    Lasso,                          0.5),
+                ('ElasticNet',               ElasticNet,                     0.5),
+                # ── Tree-based ─────────────────────────────────────
+                ('DecisionTree',             DecisionTreeRegressor,          0.5),
+                ('RandomForest',             RandomForestRegressor,          8.0),
+                ('ExtraTrees',               ExtraTreesRegressor,            7.0),
+                # ── Gradient Boosting ──────────────────────────────
+                ('GradientBoosting',         GradientBoostingRegressor,      4.0),
+                ('HistGradientBoosting',     HistGradientBoostingRegressor,  3.0),
+                # ── Kernel ─────────────────────────────────────────
+                ('SVR',                      SVR,                            2.0),
             ]
 
     @staticmethod
@@ -635,7 +807,7 @@ class ModelTrainer:
                 except:
                     pass
 
-            model = model_class(**best_params, random_state=Config.RANDOM_STATE)
+            model = _build_model(model_class, best_params)
             model.fit(X_tr, y_tr)
             preds = model.predict(X_val)
 
@@ -656,7 +828,7 @@ class ModelTrainer:
         else:
             X_train_final, y_train_final = X_train, y_train
 
-        final_model = model_class(**best_params, random_state=Config.RANDOM_STATE)
+        final_model = _build_model(model_class, best_params)
         final_model.fit(X_train_final, y_train_final)
 
         # Test set evaluation
@@ -1074,6 +1246,19 @@ class AutoMLPlatform:
                 records.append(record)
                 models.append(trained_model)
 
+                # ── Save metadata for every model immediately ────────────
+                # This ensures /models in the API shows the full leaderboard,
+                # not just the winner.  Artifacts (.pkl/.joblib) are only
+                # written for the promoted best model (step 14), but the
+                # metadata file lets the registry track every run.
+                _meta_path = Config.MODEL_DIR / f"{record.model_id}_metadata.json"
+                with open(_meta_path, 'w') as _f:
+                    import json as _json
+                    _json.dump(
+                        {**asdict(record)},
+                        _f, indent=2
+                    )
+
                 self.logger.info(
                     f"{model_name}: CV={record.cv_score_mean:.4f}±{record.cv_score_std:.4f}, "
                     f"Test={record.test_score:.4f}, Score={record.final_score:.4f}"
@@ -1095,10 +1280,12 @@ class AutoMLPlatform:
             'test_score', 'latency_ms', 'final_score'
         ]].to_string(index=False))
 
-        # Get best model
+        # Use iloc[0] positional index then map back to original list position
+        # (sort_values preserves the original integer index as labels,
+        #  so .index[0] gives the correct position in records/models lists)
         best_idx = leaderboard.index[0]
         best_record = records[best_idx]
-        best_model = models[best_idx]
+        best_model  = models[best_idx]
 
         self.logger.info(f"\nBest Model: {best_record.model_name}")
         self.logger.info(f"Best Score: {best_record.final_score:.4f}")
@@ -1114,10 +1301,15 @@ class AutoMLPlatform:
         drifted_cols = drift_df[drift_df['overall_drift']]
         if not drifted_cols.empty:
             self.logger.warning(f"Drift detected in {len(drifted_cols)} columns:")
-            print("\n" + drifted_cols[['column', 'ks_pvalue', 'psi_value', 'overall_drift']].to_string(index=False))
-            self.logger.warning("⚠️  Model retraining recommended")
+            # Use print() for the table so pandas formatting is never sent
+            # through the logging codec path (avoids cp1252 issues on Windows)
+            drift_table = drifted_cols[
+                ['column', 'ks_pvalue', 'psi_value', 'overall_drift']
+            ].to_string(index=False)
+            print("\n" + drift_table, flush=True)
+            self.logger.warning("[!] Model retraining recommended")
         else:
-            self.logger.info("✅ No significant drift detected")
+            self.logger.info("[OK] No significant drift detected")
 
         # ============ 13. Model Promotion Logic ============
         if previous_best_score is not None:
@@ -1131,13 +1323,13 @@ class AutoMLPlatform:
             self.logger.info(f"Improvement: {improvement:+.4f}")
 
             if improvement > self.config.PROMOTION_MARGIN:
-                self.logger.info("✅ NEW MODEL PROMOTED - Significant improvement!")
+                self.logger.info("[PROMOTED] NEW MODEL - Significant improvement!")
                 promote = True
             else:
-                self.logger.info("❌ NEW MODEL REJECTED - Insufficient improvement")
+                self.logger.info("[REJECTED] NEW MODEL - Insufficient improvement")
                 promote = False
         else:
-            self.logger.info("\n📌 First run - deploying current best model")
+            self.logger.info("[FIRST RUN] Deploying current best model")
             promote = True
 
         # ============ 14. Model Persistence ============
@@ -1191,7 +1383,7 @@ class AutoMLPlatform:
         self.logger.info(f"Features (final): {X_train_processed.shape[1]}")
         self.logger.info(f"Models trained: {len(records)}")
         self.logger.info(f"Best model: {best_record.model_name}")
-        self.logger.info(f"Best CV score: {best_record.cv_score_mean:.4f} ± {best_record.cv_score_std:.4f}")
+        self.logger.info(f"Best CV score: {best_record.cv_score_mean:.4f} +/- {best_record.cv_score_std:.4f}")
         self.logger.info(f"Best test score: {best_record.test_score:.4f}")
         self.logger.info(f"Best final score: {best_record.final_score:.4f}")
         if pickle_path:
@@ -1213,23 +1405,23 @@ def run_automl(
     csv_path: str,
     target_column: str,
     previous_best_score: Optional[float] = None,
-    save_models: bool = True
+    save_models: bool = True,
+    model_candidates: Optional[Dict] = None,
+    regression_candidates: Optional[Dict] = None,
 ) -> float:
     """
-    Convenience function to run AutoML pipeline
-
-    Example:
-        # First run
-        score = run_automl('data.csv', 'target')
-
-        # Second run with promotion logic
-        new_score = run_automl('data.csv', 'target', previous_best_score=score)
+    Convenience function to run AutoML pipeline.
 
     Args:
         csv_path: Path to CSV file
         target_column: Name of target column
-        previous_best_score: Previous best score for promotion
+        previous_best_score: Previous best score for model promotion
         save_models: Whether to save trained models
+        model_candidates: Optional override for classification model zoo
+            (passed from app.py; ignored here — zoo is resolved inside
+            ModelTrainer.get_model_zoo which already uses the full suite)
+        regression_candidates: Optional override for regression model zoo
+            (same note as above)
 
     Returns:
         Best model final score
@@ -1239,9 +1431,8 @@ def run_automl(
         csv_path=csv_path,
         target_column=target_column,
         previous_best_score=previous_best_score,
-        save_models=save_models
+        save_models=save_models,
     )
-
     return record.final_score
 
 
@@ -1342,5 +1533,5 @@ if __name__ == "__main__":
         print("\nSaved Models:")
         print(models_df[['model_name', 'test_score', 'final_score', 'timestamp']])
 
-    print("\n✅ Done!  Check MODEL_SUMMARY.md and the models/ folder.")
+    print("[DONE] Check MODEL_SUMMARY.md and the models/ folder.")
     print("To serve predictions: uvicorn app:app --host 0.0.0.0 --port 8000")
