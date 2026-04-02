@@ -141,12 +141,12 @@ export default function ResultsView({ modelData }) {
           
           <div className="flex-1 flex flex-col gap-8 relative z-10">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {/* Test Accuracy */}
+              {/* Final Score */}
               <div className="flex flex-col gap-1">
-                <p className="text-[#8C8C8C] text-xs font-bold uppercase tracking-[0.2em]">Test Accuracy</p>
+                <p className="text-[#8C8C8C] text-xs font-bold uppercase tracking-[0.2em]">Final Score</p>
                 <div className="flex items-baseline gap-2">
                   <span className="text-7xl font-bold text-white" style={{ textShadow: '0 0 20px rgba(255, 255, 255, 0.4)' }}>
-                    {test_score.toFixed(4)}
+                    {final_score.toFixed(4)}
                   </span>
                   {accuracyChange >= 0 && (
                     <span className="text-green-400 text-sm font-bold flex items-center gap-1">
@@ -193,7 +193,7 @@ export default function ResultsView({ modelData }) {
               </div>
               <div className="flex items-center gap-2 text-[#8C8C8C]">
                 <Star size={16} />
-                <span className="text-xs font-medium">Final Score: {final_score.toFixed(4)}</span>
+                <span className="text-xs font-medium">Test Accuracy: {test_score.toFixed(4)}</span>
               </div>
               <div className="flex items-center gap-2 text-[#8C8C8C]">
                 <BarChart3 size={16} />

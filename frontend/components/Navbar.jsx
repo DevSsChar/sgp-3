@@ -1,7 +1,15 @@
 "use client";
 import Link from "next/link";
 
-const NAV_LINKS = ["Platform", "Features", "Pricing", "Docs", "Enterprise"];
+const NAV_LINKS = [
+  { label: "Train", href: "/train" },
+  { label: "Tuner", href: "/tuner" },
+  { label: "Pricing", href: "#" },
+  { label: "Docs", href: "#" },
+  // { label: "Platform", href: "#" },
+  // { label: "Features", href: "#" },
+  // { label: "Enterprise", href: "#" },
+];
 
 export default function Navbar() {
   return (
@@ -21,23 +29,23 @@ export default function Navbar() {
       </Link>
       
       <div className="hidden md:flex items-center gap-8">
-        {NAV_LINKS.map((l) => (
-          <a 
-            key={l} 
-            href="#" 
+        {NAV_LINKS.map((item) => (
+          <Link
+            key={item.label}
+            href={item.href}
             className="text-sm transition-colors duration-200" 
             style={{ color: "#B0B0B0" }}
             onMouseEnter={(e) => e.target.style.color = "#E0E0E0"}
             onMouseLeave={(e) => e.target.style.color = "#B0B0B0"}
           >
-            {l}
-          </a>
+            {item.label}
+          </Link>
         ))}
       </div>
       
       <div className="flex items-center gap-3">
         <Link 
-          href="/upload" 
+          href="/train" 
           className="text-sm px-4 py-2 rounded-xl transition-all duration-200 font-medium"
           style={{ color: "#B0B0B0", border: "1px solid rgba(140,140,140,0.4)" }}
           onMouseEnter={(e) => { 
@@ -52,7 +60,7 @@ export default function Navbar() {
           Sign In
         </Link>
         <Link 
-          href="/upload" 
+          href="/train" 
           className="text-sm px-5 py-2 rounded-xl font-semibold transition-all duration-200"
           style={{ background: "#757575", color: "#E0E0E0" }}
           onMouseEnter={(e) => e.currentTarget.style.background = "#8C8C8C"}

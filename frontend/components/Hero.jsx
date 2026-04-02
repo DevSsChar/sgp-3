@@ -41,7 +41,7 @@ export default function Hero() {
           
           <div className="flex flex-wrap gap-4 mb-12">
             <Link 
-              href="/upload" 
+              href="/train" 
               className="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl font-semibold text-sm transition-all duration-250"
               style={{ background: "#757575", color: "#E0E0E0", boxShadow: "0 4px 20px rgba(117,117,117,0.4)" }}
               onMouseEnter={(e) => { 
