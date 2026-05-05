@@ -61,6 +61,23 @@ from sklearn.discriminant_analysis import (
 )
 from sklearn.utils.class_weight import compute_class_weight
 
+# XGBoost & LightGBM (optional but recommended)
+try:
+    import xgboost as xgb
+    XGBOOST_AVAILABLE = True
+except ImportError:
+    XGBOOST_AVAILABLE = False
+    logger_temp = logging.getLogger("AutoML")
+    logger_temp.debug("XGBoost not installed. Install with: pip install xgboost")
+
+try:
+    import lightgbm as lgb
+    LGBM_AVAILABLE = True
+except ImportError:
+    LGBM_AVAILABLE = False
+    logger_temp = logging.getLogger("AutoML")
+    logger_temp.debug("LightGBM not installed. Install with: pip install lightgbm")
+
 # Models that do NOT accept a random_state constructor argument
 _NO_RANDOM_STATE = {
     KNeighborsClassifier, KNeighborsRegressor,
@@ -128,6 +145,13 @@ class Config:
     # Optuna
     OPTUNA_TRIALS = 50
     OPTUNA_TIMEOUT = 300  # seconds
+
+    # Fast mode: Train only top 5 models (quick prefiltering)
+    # Useful for large datasets or real-time scenarios
+    FAST_MODE = False  # Set to True to skip slow models
+
+    # Multi-target support: Train separate models for each target
+    MULTI_TARGET_MODE = False  # Set to True to enable multi-target training
 
     # Paths
     MODEL_DIR = Path("models")
@@ -605,6 +629,29 @@ class HyperparameterTuner:
                 'reg_param': trial.suggest_float('reg_param', 0.0, 1.0),
             }
 
+        # ── XGBoost ─────────────────────────────────────────────────────
+        elif model_name == 'XGBoost':
+            return {
+                'n_estimators':    trial.suggest_int('n_estimators', 50, 500),
+                'max_depth':       trial.suggest_int('max_depth', 2, 15),
+                'learning_rate':   trial.suggest_float('learning_rate', 0.001, 0.5, log=True),
+                'subsample':       trial.suggest_float('subsample', 0.5, 1.0),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+                'gamma':           trial.suggest_float('gamma', 0.0, 10.0),
+            }
+
+        # ── LightGBM ────────────────────────────────────────────────────
+        elif model_name == 'LightGBM':
+            return {
+                'n_estimators':    trial.suggest_int('n_estimators', 50, 500),
+                'max_depth':       trial.suggest_int('max_depth', 2, 15),
+                'learning_rate':   trial.suggest_float('learning_rate', 0.001, 0.5, log=True),
+                'num_leaves':      trial.suggest_int('num_leaves', 20, 200),
+                'subsample':       trial.suggest_float('subsample', 0.5, 1.0),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+                'min_child_samples': trial.suggest_int('min_child_samples', 5, 50),
+            }
+
         return {}  # Fallback: use model defaults
 
     @staticmethod
@@ -665,15 +712,18 @@ class ModelTrainer:
         """
         Return (name, class, size_mb_estimate) for every candidate model.
 
-        Classification: 13 algorithms spanning linear, tree, boosting,
-                        kernel, probabilistic, and discriminant families.
-        Regression:      9 algorithms covering the same breadth.
+        Classification: 16 algorithms spanning linear, tree, boosting,
+                        kernel, probabilistic, discriminant, and modern gradient boosting.
+        Regression:      12 algorithms covering the same breadth.
 
         size_mb is a rough disk-footprint estimate used in the cost-aware
         scoring formula — lower is better.
+
+        XGBoost and LightGBM are included if available (much faster & more accurate
+        than sklearn's GradientBoosting for tabular data).
         """
         if task == 'classification':
-            return [
+            models = [
                 # ── Linear / Probabilistic ─────────────────────────
                 ('LogisticRegression',       LogisticRegression,             1.0),
                 ('RidgeClassifier',          RidgeClassifier,                0.5),
@@ -694,9 +744,20 @@ class ModelTrainer:
                 # ── Discriminant Analysis ──────────────────────────
                 ('LDA',                      LinearDiscriminantAnalysis,     0.5),
                 ('QDA',                      QuadraticDiscriminantAnalysis,  0.5),
+                # ── Modern Gradient Boosting (if available) ────────
             ]
+
+            # Add XGBoost if available
+            if XGBOOST_AVAILABLE:
+                models.append(('XGBoost', xgb.XGBClassifier, 5.0))
+
+            # Add LightGBM if available (fastest gradient boosting)
+            if LGBM_AVAILABLE:
+                models.append(('LightGBM', lgb.LGBMClassifier, 3.0))
+
+            return models
         else:
-            return [
+            models = [
                 # ── Linear ─────────────────────────────────────────
                 ('LinearRegression',         LinearRegression,               0.2),
                 ('Ridge',                    Ridge,                          0.5),
@@ -711,6 +772,44 @@ class ModelTrainer:
                 ('HistGradientBoosting',     HistGradientBoostingRegressor,  3.0),
                 # ── Kernel ─────────────────────────────────────────
                 ('SVR',                      SVR,                            2.0),
+                # ── Modern Gradient Boosting (if available) ────────
+            ]
+
+            # Add XGBoost if available
+            if XGBOOST_AVAILABLE:
+                models.append(('XGBoost', xgb.XGBRegressor, 5.0))
+
+            # Add LightGBM if available (fastest gradient boosting)
+            if LGBM_AVAILABLE:
+                models.append(('LightGBM', lgb.LGBMRegressor, 3.0))
+
+            return models
+
+    @staticmethod
+    def get_fast_model_zoo(task: str) -> List[Tuple[str, Any, float]]:
+        """
+        Return only top 5 fast models for quick evaluation.
+        Useful for large datasets or when speed is critical.
+        """
+        if task == 'classification':
+            return [
+                ('LogisticRegression',       LogisticRegression,             1.0),
+                ('DecisionTree',             DecisionTreeClassifier,         0.5),
+                ('RandomForest',             RandomForestClassifier,         8.0),
+                ('GradientBoosting',         GradientBoostingClassifier,     4.0),
+                ('LightGBM' if LGBM_AVAILABLE else 'XGBoost' if XGBOOST_AVAILABLE else 'SVC',
+                 lgb.LGBMClassifier if LGBM_AVAILABLE else (xgb.XGBClassifier if XGBOOST_AVAILABLE else SVC),
+                 3.0 if LGBM_AVAILABLE else 5.0 if XGBOOST_AVAILABLE else 2.0),
+            ]
+        else:
+            return [
+                ('LinearRegression',         LinearRegression,               0.2),
+                ('DecisionTree',             DecisionTreeRegressor,          0.5),
+                ('RandomForest',             RandomForestRegressor,          8.0),
+                ('GradientBoosting',         GradientBoostingRegressor,      4.0),
+                ('LightGBM' if LGBM_AVAILABLE else 'XGBoost' if XGBOOST_AVAILABLE else 'SVR',
+                 lgb.LGBMRegressor if LGBM_AVAILABLE else (xgb.XGBRegressor if XGBOOST_AVAILABLE else SVR),
+                 3.0 if LGBM_AVAILABLE else 5.0 if XGBOOST_AVAILABLE else 2.0),
             ]
 
     @staticmethod
@@ -1102,7 +1201,8 @@ class AutoMLPlatform:
     def run(
         self,
         csv_path: str,
-        target_column: str,
+        target_column: str = None,
+        target_columns: List[str] = None,
         previous_best_score: Optional[float] = None,
         save_models: bool = True
     ) -> Tuple[Any, ModelRecord]:
@@ -1111,14 +1211,87 @@ class AutoMLPlatform:
 
         Args:
             csv_path: Path to dataset
-            target_column: Name of target column
+            target_column: Name of single target column (deprecated, use target_columns)
+            target_columns: List of target columns (for multi-target mode)
             previous_best_score: Score to beat for model promotion
             save_models: Whether to save trained models
 
         Returns:
-            best_model: Trained model
-            best_record: Model performance record
+            best_model: Trained model (for single target) or dict of models (multi-target)
+            best_record: Model performance record (for single target) or dict of records (multi-target)
         """
+
+        # Handle backward compatibility
+        if target_columns is None:
+            if target_column is None:
+                raise ValueError("Either target_column or target_columns must be specified")
+            target_columns = [target_column]
+
+        # Multi-target mode
+        if len(target_columns) > 1 or Config.MULTI_TARGET_MODE:
+            return self._run_multi_target(csv_path, target_columns, save_models)
+        
+        # Single-target mode (existing logic)
+        return self._run_single_target(
+            csv_path, target_columns[0], previous_best_score, save_models
+        )
+
+    def _run_multi_target(
+        self,
+        csv_path: str,
+        target_columns: List[str],
+        save_models: bool
+    ) -> Dict:
+        """Run AutoML for multiple target columns independently"""
+        
+        self.logger.info("="*60)
+        self.logger.info(f"MULTI-TARGET MODE: Training {len(target_columns)} targets")
+        self.logger.info("="*60)
+
+        results = {}
+
+        for i, target_col in enumerate(target_columns, 1):
+            self.logger.info(f"\n[{i}/{len(target_columns)}] Training target: {target_col}")
+            self.logger.info("-" * 60)
+
+            try:
+                model, record = self._run_single_target(
+                    csv_path, target_col, save_models=save_models
+                )
+                results[target_col] = {
+                    'model': model,
+                    'record': record,
+                    'status': 'success'
+                }
+            except Exception as e:
+                self.logger.error(f"Failed to train {target_col}: {str(e)}")
+                results[target_col] = {
+                    'status': 'failed',
+                    'error': str(e)
+                }
+
+        self.logger.info("\n" + "="*60)
+        self.logger.info("MULTI-TARGET SUMMARY")
+        self.logger.info("="*60)
+
+        for target, result in results.items():
+            if result['status'] == 'success':
+                self.logger.info(
+                    f"✓ {target}: Best={result['record'].model_name}, "
+                    f"Score={result['record'].final_score:.4f}"
+                )
+            else:
+                self.logger.error(f"✗ {target}: {result['error']}")
+
+        return results
+
+    def _run_single_target(
+        self,
+        csv_path: str,
+        target_column: str,
+        previous_best_score: Optional[float] = None,
+        save_models: bool = True
+    ) -> Tuple[Any, ModelRecord]:
 
         self.logger.info("="*60)
         self.logger.info("ELITE AutoML Platform Started")
@@ -1221,10 +1394,13 @@ class AutoMLPlatform:
 
         # ============ 10. Model Training ============
         self.logger.info("\n" + "="*60)
-        self.logger.info("Training Models with Cross-Validation")
+        if Config.FAST_MODE:
+            self.logger.info("Training Top 5 Models (FAST MODE)")
+        else:
+            self.logger.info("Training All Models (COMPREHENSIVE MODE)")
         self.logger.info("="*60)
 
-        model_zoo = ModelTrainer.get_model_zoo(task)
+        model_zoo = ModelTrainer.get_fast_model_zoo(task) if Config.FAST_MODE else ModelTrainer.get_model_zoo(task)
         records = []
         models = []
 
@@ -1403,7 +1579,8 @@ class AutoMLPlatform:
 
 def run_automl(
     csv_path: str,
-    target_column: str,
+    target_column: str = None,
+    target_columns: List[str] = None,
     previous_best_score: Optional[float] = None,
     save_models: bool = True,
     model_candidates: Optional[Dict] = None,
@@ -1414,25 +1591,38 @@ def run_automl(
 
     Args:
         csv_path: Path to CSV file
-        target_column: Name of target column
+        target_column: Name of single target column
+        target_columns: List of target columns for multi-target training
         previous_best_score: Previous best score for model promotion
         save_models: Whether to save trained models
-        model_candidates: Optional override for classification model zoo
-            (passed from app.py; ignored here — zoo is resolved inside
-            ModelTrainer.get_model_zoo which already uses the full suite)
-        regression_candidates: Optional override for regression model zoo
-            (same note as above)
+        model_candidates: Optional override for classification model zoo (ignored)
+        regression_candidates: Optional override for regression model zoo (ignored)
 
     Returns:
-        Best model final score
+        Best model final score (single target) or dict of scores (multi-target)
     """
     platform = AutoMLPlatform()
-    model, record = platform.run(
+    result = platform.run(
         csv_path=csv_path,
         target_column=target_column,
+        target_columns=target_columns,
         previous_best_score=previous_best_score,
         save_models=save_models,
     )
+
+    # Handle multi-target results
+    if isinstance(result, dict):
+        # Multi-target mode
+        scores = {}
+        for target, data in result.items():
+            if data['status'] == 'success':
+                scores[target] = data['record'].final_score
+            else:
+                scores[target] = None
+        return scores
+
+    # Single-target mode
+    model, record = result
     return record.final_score
 
 

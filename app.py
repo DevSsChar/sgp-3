@@ -4,6 +4,8 @@ FastAPI Inference Server for ELITE AutoML Platform
 ==============================================================
 Endpoints:
   GET  /                    - Health check + links to all endpoints
+  GET  /config              - Get current AutoML configuration
+  POST /config              - Update config (fast_mode, multi_target_mode, etc)
   GET  /models              - List saved models with full metrics
   GET  /models/best         - Best model details + metrics
   GET  /models/download     - Download best model .pkl file
@@ -11,9 +13,17 @@ Endpoints:
   GET  /metrics             - Full metrics for every trained model
   POST /train               - Upload CSV to train a new AutoML run
   POST /train/kaggle        - Provide a Kaggle dataset link to train
+  POST /train/multi-target  - Upload CSV + multiple targets
   POST /predict             - JSON rows → predictions
   POST /predict/csv         - Upload CSV → predictions
   GET  /predict/example     - Example payload + curl command
+
+Features:
+  - 14 classification models (+ XGBoost/LightGBM if installed)
+  - 10 regression models (+ XGBoost/LightGBM if installed)
+  - Multi-target training support
+  - Fast Mode for large datasets (top 5 models only)
+  - Optuna hyperparameter optimization (50 trials per model)
 ==============================================================
 
 Run locally:
@@ -116,6 +126,28 @@ class TrainResponse(BaseModel):
     test_score: Optional[float] = None
     final_score: Optional[float] = None
     pickle_download: Optional[str] = None
+
+
+class ConfigRequest(BaseModel):
+    """Configuration update request."""
+    fast_mode: Optional[bool] = None
+    multi_target_mode: Optional[bool] = None
+    optuna_trials: Optional[int] = None
+
+
+class ConfigResponse(BaseModel):
+    """Current configuration state."""
+    fast_mode: bool
+    multi_target_mode: bool
+    optuna_trials: int
+    xgboost_available: bool
+    lgbm_available: bool
+    message: str
+
+
+class MultiTargetTrainRequest(BaseModel):
+    """Body for multi-target training."""
+    target_columns: List[str]  # List of target column names
 
 
 # ==============================================================
@@ -479,6 +511,104 @@ def train_from_kaggle(req: TrainRequest):
 
 
 # ==============================================================
+# ENDPOINTS — CONFIGURATION
+# ==============================================================
+
+@app.get("/config", response_model=ConfigResponse, tags=["Configuration"])
+def get_config():
+    """Get current AutoML configuration settings."""
+    from main import Config, XGBOOST_AVAILABLE, LGBM_AVAILABLE
+    
+    return ConfigResponse(
+        fast_mode=Config.FAST_MODE,
+        multi_target_mode=Config.MULTI_TARGET_MODE,
+        optuna_trials=Config.OPTUNA_TRIALS,
+        xgboost_available=XGBOOST_AVAILABLE,
+        lgbm_available=LGBM_AVAILABLE,
+        message="Configuration retrieved successfully"
+    )
+
+
+@app.post("/config", response_model=ConfigResponse, tags=["Configuration"])
+def update_config(req: ConfigRequest):
+    """
+    Update AutoML configuration settings.
+    
+    - `fast_mode`: If True, train only top 5 fastest models (useful for large datasets)
+    - `multi_target_mode`: If True, support training multiple targets simultaneously
+    - `optuna_trials`: Number of hyperparameter optimization trials per model
+    """
+    from main import Config, XGBOOST_AVAILABLE, LGBM_AVAILABLE
+    
+    if req.fast_mode is not None:
+        Config.FAST_MODE = req.fast_mode
+    if req.multi_target_mode is not None:
+        Config.MULTI_TARGET_MODE = req.multi_target_mode
+    if req.optuna_trials is not None and req.optuna_trials > 0:
+        Config.OPTUNA_TRIALS = req.optuna_trials
+
+    return ConfigResponse(
+        fast_mode=Config.FAST_MODE,
+        multi_target_mode=Config.MULTI_TARGET_MODE,
+        optuna_trials=Config.OPTUNA_TRIALS,
+        xgboost_available=XGBOOST_AVAILABLE,
+        lgbm_available=LGBM_AVAILABLE,
+        message="Configuration updated successfully"
+    )
+
+
+# ==============================================================
+# ENDPOINTS — MULTI-TARGET TRAINING
+# ==============================================================
+
+@app.post("/train/multi-target", tags=["Training"])
+async def train_multi_target(
+    file: UploadFile = File(..., description="CSV dataset file"),
+    target_columns: str = Form(..., description="Comma-separated target column names (e.g., 'target1,target2,target3')"),
+):
+    """
+    Upload a CSV dataset and train separate AutoML models for multiple target columns.
+    
+    Example:
+    - Upload: data.csv
+    - target_columns: "price,demand,quality"
+    
+    Returns: Dict with results for each target column
+    
+    Note: Set `multi_target_mode=true` via /config endpoint to enable multi-target toggle in /train
+    """
+    from main import run_automl
+    
+    # Parse target columns
+    targets = [t.strip() for t in target_columns.split(',')]
+    
+    if len(targets) < 2:
+        raise HTTPException(400, "Multi-target training requires at least 2 target columns")
+    
+    # Save uploaded file
+    csv_path = UPLOAD_DIR / file.filename
+    contents = await file.read()
+    with open(csv_path, "wb") as f:
+        f.write(contents)
+
+    try:
+        scores = run_automl(
+            csv_path=str(csv_path),
+            target_columns=targets
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Multi-target training complete for {len(targets)} targets",
+            "targets_trained": targets,
+            "scores": scores,
+            "csv_file": str(csv_path)
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Multi-target training failed: {traceback.format_exc()}")
+
+
+# ==============================================================
 # ENDPOINTS — PREDICTION
 # ==============================================================
 
@@ -629,4 +759,4 @@ def predict_example():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("app:app", host="127.0.0.0", port=8000, reload=True)
